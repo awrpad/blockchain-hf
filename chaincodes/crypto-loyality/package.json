@@ -1,0 +1,24 @@
+{
+  "name": "crypto-loyality",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsc && fabric-chaincode-node start",
+    "start:dev": "tsc && fabric-chaincode-node start --peer.address \"127.0.0.1:8541\" --chaincode-id-name \"crypto-loyality:0.0.1\" --tls.enabled false",
+    "start:watch": "nodemon -w index.ts --exec \"npm run start:dev\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "nodemon": "^3.1.0",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "fabric-contract-api": "^2.5.4",
+    "fabric-shim": "^2.5.4",
+    "json-stringify-deterministic": "^1.0.12"
+  }
+}
