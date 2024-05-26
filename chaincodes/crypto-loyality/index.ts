@@ -5,9 +5,12 @@ const COUPONTYPE = "COUPONTYPE";
 const COUPON = "COUPON";
 const SHOP = "SHOP";
 const CUSTOMER = "CUSTOMER";
+const SHOP_SPECIFIC_TOKEN = "SHOP_SPECIFIC_TOKEN";
 
 export class CryptoLoyality extends Contract {
-    serialize: CLSerialize = new CLSerialize();
+    serialize = new CLSerialize();
+    keygen = new CLKeyGen();
+    get = new CLGetter();
 
     constructor() {
         super("CryptoLoyality");
@@ -36,6 +39,64 @@ export class CryptoLoyality extends Contract {
         return buff !== null && buff.length > 0;
     }
 
+    async shopSpecificTokenExists(ctx: Context, shopId: string, customerId: string) {
+        const key = ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId]);
+        const buff = await ctx.stub.getState(key);
+
+        return buff !== null && buff.length > 0;
+    }
+
+    async entityExists(ctx: Context, key: string) {
+        const buff = await ctx.stub.getState(key);
+
+        return buff !== null && buff.length > 0;
+    }
+
+    async createShopSpecificToken(ctx: Context, shopId: string, customerId: string) {
+        const sstKey = ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId]);
+
+        if(await this.entityExists(ctx, sstKey)) {
+            throw new Error(`<createShopSpecificToken> : Cannot create Shop Specific Token where the shop is "${shopId}" and the customer is "${customerId}", because one like that already exists`)
+        }
+
+        if(! await this.shopExists(ctx, shopId)) {
+            throw new Error(`<createShopSpecificToken> : Cannot create shop specifc token, because no shop with ID "${shopId}" exists`)
+        }
+
+        if(! await this.customerExists(ctx, customerId)) {
+            error(
+                "createShopSpecificToken",
+                `Cannot create shop specifc token, because no customer with ID "${customerId}" exists`
+            )
+        }
+
+        const newSST: ShopSpecificToken = {
+            shopId, customerId, amount: 0.0
+        }
+        
+        await ctx.stub.putState(sstKey, this.serialize.sst(newSST));
+
+        return { success: "OK", key: sstKey }
+    }
+
+    async increaseShopSpecificToken(ctx: Context, shopId: string, customerId: string, addAmount: number) {
+        const key = this.keygen.sst(ctx, shopId, customerId);
+
+        if(! await this.entityExists(ctx, key)) {
+            error(
+                "increaseShopSpecificToken",
+                `Cannot update the Shop Specific Token where the shop is "${shopId}" and the customer is "${customerId}", because no such token exists yet`
+            )
+        }
+
+        let theToken = await this.get.sst(ctx, shopId, customerId);
+        theToken.amount += addAmount;
+
+        await ctx.stub.putState(key, this.serialize.sst(theToken));
+
+        return { success: "OK" }
+    }
+
     async createShop(ctx: Context, id: string, multiplier: number, minPrice: number, maxPoints: number) {
         const shopAlreadyExists = await this.shopExists(ctx, id);
         if(shopAlreadyExists) {
@@ -52,7 +113,7 @@ export class CryptoLoyality extends Contract {
         }
         await ctx.stub.putState(key, this.serialize.shop(shop));
 
-        return { success: "OK", key: key};
+        return { success: "OK", key: key };
     }
 
     async createCouponType(ctx: Context, shopId: string, kind: string, val: string) {
@@ -67,7 +128,7 @@ export class CryptoLoyality extends Contract {
             shopId, kind, val, active: true
         }
         
-        await ctx.stub.putState(key, Buffer.from(stringify(ct)));
+        await ctx.stub.putState(key, this.serialize.couponType(ct));
 
         return { success: "OK" };
     }
@@ -99,10 +160,10 @@ export class CryptoLoyality extends Contract {
             }
 
             const couponKey = ctx.stub.createCompositeKey(COUPON, [newCoupon.id, newCoupon.typeId])
-            await ctx.stub.putState(couponKey, Buffer.from(stringify(newCoupon)));
+            await ctx.stub.putState(couponKey, this.serialize.coupon(newCoupon));
         }
 
-        return { success: "OK", "n": n};
+        return { success: "OK", "n": n };
     }
 
     async createCustomer(ctx: Context, id: string) {
@@ -115,7 +176,7 @@ export class CryptoLoyality extends Contract {
         const newCustomer: Customer = {
             id, points: 0.0
         }
-        await ctx.stub.putState(key, Buffer.from(stringify(newCustomer)));
+        await ctx.stub.putState(key, this.serialize.customer(newCustomer));
 
         return { success: "OK", newCustomerKey: key }
     }
@@ -127,7 +188,7 @@ export class CryptoLoyality extends Contract {
         }
 
         const key = ctx.stub.createCompositeKey(CUSTOMER, [c.id])
-        await ctx.stub.putState(key, Buffer.from(stringify(c)))
+        await ctx.stub.putState(key, this.serialize.customer(c))
 
         return { success: "OK" }
     }
@@ -171,7 +232,12 @@ export class CryptoLoyality extends Contract {
 
         // Register the changes
         this.updateCustomer(ctx, theCustomer);
-        // TODO: Also do something with the shop specific (cashback) points
+        // If the customer does not yet have specific tokens for this shop, we create one
+        if(! await this.shopSpecificTokenExists(ctx, shopId, customerId)) {
+            this.createShopSpecificToken(ctx, shopId, customerId);
+        }
+        // TODO !!!!!
+
 
         return { success: "OK" }
     }
@@ -193,6 +259,29 @@ class CLSerialize {
     public couponType(ct: CouponType) {
         return Buffer.from(stringify(ct));
     }
+
+    public sst(s: ShopSpecificToken) {
+        return Buffer.from(stringify(s));
+    }
+}
+
+class CLKeyGen {
+    public sst(ctx: Context, shopId: string, customerId: string) {
+        return ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId])
+    }
+}
+
+class CLGetter {
+    private keygen = new CLKeyGen();
+
+    async sst(ctx: Context, shopId: string, customerId: string) {
+        const key = this.keygen.sst(ctx, shopId, customerId);
+
+        const buff = await ctx.stub.getState(key);
+        const theSST: ShopSpecificToken = JSON.parse(buff.toString());
+
+        return theSST;
+    }
 }
 
 type Shop = {
@@ -203,6 +292,10 @@ type Shop = {
     // Determines how many of the points given will be "generic" points
     //     The rest will be given as store specific points
     freePointsPercentage: number
+}
+
+function error(methodName: string, msg: string) {
+    throw new Error(`<${methodName}> : ${msg}`)
 }
 
 type Customer = {
@@ -223,6 +316,12 @@ type Coupon = {
     owner: string,
     validUntil: Date,
     seriesId: string
+}
+
+type ShopSpecificToken = {
+    shopId: string,
+    customerId: string,
+    amount: number
 }
 
 
