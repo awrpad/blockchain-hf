@@ -53,11 +53,24 @@ export class CryptoLoyality extends Contract {
         return "pong";
     }
 
-    async register(ctx: Context, id: string, uRole: string) {
-        const clientId = ctx.clientIdentity.getID();
-        const userKey = this.keygen.user(ctx, clientId);
+    async registerCustomer(ctx: Context, id: string) {
+        const result = await this.registerUser(ctx, id);
+        if(result == undefined || result == null) {
+            error(
+                "registerCustomer",
+                "Got bad result from registerUser"
+            )
+            return;
+        }
+        await this.createCustomer(ctx, id, result.key)
 
-        if(await entityExists(ctx, userKey)) {
+        return { success: "OK", clientId: result.key }
+    }
+
+    async registerUser(ctx: Context, uRole: string) {
+        const clientId = ctx.clientIdentity.getID();
+
+        if(await entityExists(ctx, clientId)) {
             error(
                 "register",
                 `Cannot register new user, because a registration for the requesting client already exists\n---[ Client info ]---\n${clientId}`
@@ -73,13 +86,11 @@ export class CryptoLoyality extends Contract {
             return // Just because the linter doesn't seem to be clever enough to discover that the error function will thor
         }
 
-        const newUser: User = {
-            id, role
-        }
+        const newUser: User = { role }
 
-        ctx.stub.putState(userKey, this.serialize.user(newUser));
+        ctx.stub.putState(clientId, this.serialize.user(newUser));
 
-        return { success: "OK", key: userKey }
+        return { success: "OK", key: clientId }
     }
 
     async createShopSpecificToken(ctx: Context, shopId: string, customerId: string) {
@@ -127,7 +138,7 @@ export class CryptoLoyality extends Contract {
         return { success: "OK" }
     }
 
-    async createShop(ctx: Context, id: string, multiplier: number, minPrice: number, maxPoints: number) {
+    async createShop(ctx: Context, id: string, clientId: string, multiplier: number, minPrice: number, maxPoints: number) {
         const shopAlreadyExists = await shopExists(ctx, id);
         if(shopAlreadyExists) {
             throw new Error(`Cannot create new shop with ID ${id}, as one like that already exists`);
@@ -135,7 +146,7 @@ export class CryptoLoyality extends Contract {
 
         const key = this.keygen.shop(ctx, id)
         const shop: Shop = {
-            id,
+            id, clientId,
             priceToPointsMultiplier : multiplier,
             minPriceToGetPoints: minPrice,
             maxGivenPoints: maxPoints,
@@ -196,7 +207,7 @@ export class CryptoLoyality extends Contract {
         return { success: "OK", "n": n };
     }
 
-    async createCustomer(ctx: Context, id: string) {
+    async createCustomer(ctx: Context, id: string, clientId: string) {
         const customerAlreadyExists = await customerExists(ctx, id);
         if(customerAlreadyExists) {
             throw new Error(`<createCustomer> : Cannot create customer with the ID "${id}", as one like that already exists`);
@@ -204,7 +215,7 @@ export class CryptoLoyality extends Contract {
 
         const key = this.keygen.customer(ctx, id);
         const newCustomer: Customer = {
-            id, points: 0.0
+            id, clientId, points: 0.0
         }
         await ctx.stub.putState(key, this.serialize.customer(newCustomer));
 
@@ -356,16 +367,6 @@ class CLGetter {
     }
 }
 
-type Shop = {
-    id: string,
-    priceToPointsMultiplier: number,
-    minPriceToGetPoints: number,
-    maxGivenPoints: number,
-    // Determines how many of the points given will be "generic" points
-    //     The rest will be given as store specific points
-    freePointsPercentage: number
-}
-
 function error(methodName: string, msg: string) {
     throw new Error(`<${methodName}> : ${msg}`)
 }
@@ -383,6 +384,17 @@ function userRoleFromString(type: string) {
     }
 }
 
+type Shop = {
+    id: string,
+    clientId: string,
+    priceToPointsMultiplier: number,
+    minPriceToGetPoints: number,
+    maxGivenPoints: number,
+    // Determines how many of the points given will be "generic" points
+    //     The rest will be given as store specific points
+    freePointsPercentage: number
+}
+
 enum UserRole {
     Admin = "admin",
     Shop = "shop",
@@ -390,12 +402,12 @@ enum UserRole {
 }
 
 type User = {
-    id: string,
     role: UserRole
 }
 
 type Customer = {
     id: string,
+    clientId: string,
     points: number
 }
 

@@ -7,13 +7,24 @@
     "start": "tsc && fabric-chaincode-node start",
     "start:dev": "tsc && fabric-chaincode-node start --peer.address \"127.0.0.1:8541\" --chaincode-id-name \"crypto-loyality:0.0.1\" --tls.enabled false",
     "start:watch": "nodemon -w index.ts --exec \"npm run start:dev\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "testx": "mocha -r ts-node/register tests/**/*.spec.ts",
+    "test": "mocha -r ts-node/register tests/index.spec.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/chai": "^4.3.16",
+    "@types/chai-as-promised": "^7.1.8",
+    "@types/mocha": "^10.0.6",
+    "@types/sinon": "^17.0.3",
+    "chai": "^4.4.1",
+    "chai-as-promised": "^7.1.2",
+    "cross-env": "^7.0.3",
+    "mocha": "^10.4.0",
     "nodemon": "^3.1.0",
+    "sinon": "^18.0.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   },
   "dependencies": {
