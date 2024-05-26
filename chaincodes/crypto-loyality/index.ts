@@ -6,6 +6,34 @@ const COUPON = "COUPON";
 const SHOP = "SHOP";
 const CUSTOMER = "CUSTOMER";
 const SHOP_SPECIFIC_TOKEN = "SHOP_SPECIFIC_TOKEN";
+const USER = "USER";
+
+async function entityExists(ctx: Context, key: string) {
+    const buff = await ctx.stub.getState(key);
+
+    return buff !== null && buff.length > 0;
+}
+
+async function shopExists(ctx: Context, id: string) {
+    const key = ctx.stub.createCompositeKey(SHOP, [id]);
+    const buff = await ctx.stub.getState(key);
+
+    return buff !== null && buff.length > 0;
+}
+
+async function customerExists(ctx: Context, id: string) {
+    const key = ctx.stub.createCompositeKey(CUSTOMER, [id]);
+    const buff = await ctx.stub.getState(key);
+
+    return buff !== null && buff.length > 0;
+}
+
+async function shopSpecificTokenExists(ctx: Context, shopId: string, customerId: string) {
+    const key = ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId]);
+    const buff = await ctx.stub.getState(key);
+
+    return buff !== null && buff.length > 0;
+}
 
 export class CryptoLoyality extends Contract {
     serialize = new CLSerialize();
@@ -25,45 +53,47 @@ export class CryptoLoyality extends Contract {
         return "pong";
     }
 
-    async shopExists(ctx: Context, id: string) {
-        const key = ctx.stub.createCompositeKey(SHOP, [id]);
-        const buff = await ctx.stub.getState(key);
+    async register(ctx: Context, id: string, uRole: string) {
+        const clientId = ctx.clientIdentity.getID();
+        const userKey = this.keygen.user(ctx, clientId);
 
-        return buff !== null && buff.length > 0;
-    }
+        if(await entityExists(ctx, userKey)) {
+            error(
+                "register",
+                `Cannot register new user, because a registration for the requesting client already exists\n---[ Client info ]---\n${clientId}`
+            )
+        }
 
-    async customerExists(ctx: Context, id: string) {
-        const key = ctx.stub.createCompositeKey(CUSTOMER, [id]);
-        const buff = await ctx.stub.getState(key);
+        const role = userRoleFromString(uRole)
+        if(role == null) {
+            error(
+                "register",
+                `Invalid input for User Role: "${uRole}"`
+            )
+            return // Just because the linter doesn't seem to be clever enough to discover that the error function will thor
+        }
 
-        return buff !== null && buff.length > 0;
-    }
+        const newUser: User = {
+            id, role
+        }
 
-    async shopSpecificTokenExists(ctx: Context, shopId: string, customerId: string) {
-        const key = ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId]);
-        const buff = await ctx.stub.getState(key);
+        ctx.stub.putState(userKey, this.serialize.user(newUser));
 
-        return buff !== null && buff.length > 0;
-    }
-
-    async entityExists(ctx: Context, key: string) {
-        const buff = await ctx.stub.getState(key);
-
-        return buff !== null && buff.length > 0;
+        return { success: "OK", key: userKey }
     }
 
     async createShopSpecificToken(ctx: Context, shopId: string, customerId: string) {
         const sstKey = ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId]);
 
-        if(await this.entityExists(ctx, sstKey)) {
+        if(await entityExists(ctx, sstKey)) {
             throw new Error(`<createShopSpecificToken> : Cannot create Shop Specific Token where the shop is "${shopId}" and the customer is "${customerId}", because one like that already exists`)
         }
 
-        if(! await this.shopExists(ctx, shopId)) {
+        if(! await shopExists(ctx, shopId)) {
             throw new Error(`<createShopSpecificToken> : Cannot create shop specifc token, because no shop with ID "${shopId}" exists`)
         }
 
-        if(! await this.customerExists(ctx, customerId)) {
+        if(! await customerExists(ctx, customerId)) {
             error(
                 "createShopSpecificToken",
                 `Cannot create shop specifc token, because no customer with ID "${customerId}" exists`
@@ -82,7 +112,7 @@ export class CryptoLoyality extends Contract {
     async increaseShopSpecificToken(ctx: Context, shopId: string, customerId: string, addAmount: number) {
         const key = this.keygen.sst(ctx, shopId, customerId);
 
-        if(! await this.entityExists(ctx, key)) {
+        if(! await entityExists(ctx, key)) {
             error(
                 "increaseShopSpecificToken",
                 `Cannot update the Shop Specific Token where the shop is "${shopId}" and the customer is "${customerId}", because no such token exists yet`
@@ -98,12 +128,12 @@ export class CryptoLoyality extends Contract {
     }
 
     async createShop(ctx: Context, id: string, multiplier: number, minPrice: number, maxPoints: number) {
-        const shopAlreadyExists = await this.shopExists(ctx, id);
+        const shopAlreadyExists = await shopExists(ctx, id);
         if(shopAlreadyExists) {
             throw new Error(`Cannot create new shop with ID ${id}, as one like that already exists`);
         }
 
-        const key = ctx.stub.createCompositeKey(SHOP, [id]);
+        const key = this.keygen.shop(ctx, id)
         const shop: Shop = {
             id,
             priceToPointsMultiplier : multiplier,
@@ -167,12 +197,12 @@ export class CryptoLoyality extends Contract {
     }
 
     async createCustomer(ctx: Context, id: string) {
-        const customerAlreadyExists = await this.customerExists(ctx, id);
+        const customerAlreadyExists = await customerExists(ctx, id);
         if(customerAlreadyExists) {
             throw new Error(`<createCustomer> : Cannot create customer with the ID "${id}", as one like that already exists`);
         }
 
-        const key = ctx.stub.createCompositeKey(CUSTOMER, [id]);
+        const key = this.keygen.customer(ctx, id);
         const newCustomer: Customer = {
             id, points: 0.0
         }
@@ -182,24 +212,24 @@ export class CryptoLoyality extends Contract {
     }
 
     async updateCustomer(ctx: Context, c: Customer) {
-        const customerAlreadyExists = await this.customerExists(ctx, c.id);
+        const customerAlreadyExists = await customerExists(ctx, c.id);
         if(!customerAlreadyExists) {
             throw new Error(`Cannot update customer with ID ${c.id}, because such a customer does not exist yet. Please register first.`)
         }
 
-        const key = ctx.stub.createCompositeKey(CUSTOMER, [c.id])
+        const key = this.keygen.customer(ctx, c.id)
         await ctx.stub.putState(key, this.serialize.customer(c))
 
         return { success: "OK" }
     }
 
     async registerPurchase(ctx: Context, shopId: string, customerId: string, paidAmount: number) {
-        const customerAlreadyExists = await this.customerExists(ctx, customerId);
+        const customerAlreadyExists = await customerExists(ctx, customerId);
         if(!customerAlreadyExists) {
             throw new Error(`Cannot register purchase, because no customer with the ID "${customerId}" is a member of CryptoLoyality`)
         }
 
-        const shopAlreadyExists = await this.shopExists(ctx, shopId);
+        const shopAlreadyExists = await shopExists(ctx, shopId);
         if(!shopAlreadyExists) {
             throw new Error(`Cannot register purchase, because no shop with the ID "${shopId}" is part of the CryptoLoyality program`)
         }
@@ -233,11 +263,10 @@ export class CryptoLoyality extends Contract {
         // Register the changes
         this.updateCustomer(ctx, theCustomer);
         // If the customer does not yet have specific tokens for this shop, we create one
-        if(! await this.shopSpecificTokenExists(ctx, shopId, customerId)) {
+        if(! await shopSpecificTokenExists(ctx, shopId, customerId)) {
             this.createShopSpecificToken(ctx, shopId, customerId);
         }
-        // TODO !!!!!
-
+        await this.increaseShopSpecificToken(ctx, shopId, customerId, shopSpecificPointsToBeGiven)
 
         return { success: "OK" }
     }
@@ -263,11 +292,31 @@ class CLSerialize {
     public sst(s: ShopSpecificToken) {
         return Buffer.from(stringify(s));
     }
+
+    public user(u: User) {
+        return Buffer.from(stringify(u));
+    }
 }
 
 class CLKeyGen {
     public sst(ctx: Context, shopId: string, customerId: string) {
         return ctx.stub.createCompositeKey(SHOP_SPECIFIC_TOKEN, [shopId, customerId])
+    }
+
+    public couponType(ctx: Context, shopId: string, kind: string, val: string) {
+        return ctx.stub.createCompositeKey(COUPONTYPE, [ shopId, kind, val ])
+    }
+
+    public user(ctx: Context, clientId: string) {
+        return ctx.stub.createCompositeKey(USER, [clientId]);
+    }
+
+    public shop(ctx: Context, id: string) {
+        return ctx.stub.createCompositeKey(SHOP, [id]);
+    }
+
+    public customer(ctx: Context, id: string) {
+        return ctx.stub.createCompositeKey(CUSTOMER, [id]);
     }
 }
 
@@ -277,10 +326,33 @@ class CLGetter {
     async sst(ctx: Context, shopId: string, customerId: string) {
         const key = this.keygen.sst(ctx, shopId, customerId);
 
+        if(! await entityExists(ctx, key)) {
+            error(
+                "Getter :: SST",
+                `No Shop Specific Token exists where the shop is "${shopId}" and the customer is "${customerId}"`
+            )
+        }
+
         const buff = await ctx.stub.getState(key);
         const theSST: ShopSpecificToken = JSON.parse(buff.toString());
 
         return theSST;
+    }
+
+    async couponType(ctx: Context, shopId: string, kind: string, val: string) {
+        const key = this.keygen.couponType(ctx, shopId, kind, val)
+        
+        if(! await entityExists(ctx, key)) {
+            error(
+                "GET :: Coupon Type",
+                `There is no CouponType where the shop is "${shopId}", kind is "${kind}" and value is "${val}"`
+            )
+        }
+
+        const buff = await ctx.stub.getState(key);
+        const theCouponType: CouponType = JSON.parse(buff.toString());
+
+        return theCouponType;
     }
 }
 
@@ -296,6 +368,30 @@ type Shop = {
 
 function error(methodName: string, msg: string) {
     throw new Error(`<${methodName}> : ${msg}`)
+}
+
+function userRoleFromString(type: string) {
+    switch(type) {
+        case UserRole.Admin:
+            return UserRole.Admin
+        case UserRole.Shop:
+            return UserRole.Shop
+        case UserRole.Customer:
+            return UserRole.Customer
+        default:
+            return null;
+    }
+}
+
+enum UserRole {
+    Admin = "admin",
+    Shop = "shop",
+    Customer = "customer"
+}
+
+type User = {
+    id: string,
+    role: UserRole
 }
 
 type Customer = {
